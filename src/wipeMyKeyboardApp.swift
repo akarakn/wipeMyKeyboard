@@ -2,10 +2,12 @@ import SwiftUI
 
 @main
 struct wipeMyKeyboardApp: App {
+    @StateObject private var locker = KeyboardLocker()
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("Wipe My Keyboard", systemImage: "keyboard") {
+            ContentView(locker: locker)
         }
-        .windowResizability(.contentSize)
+        .menuBarExtraStyle(.window)
     }
 }

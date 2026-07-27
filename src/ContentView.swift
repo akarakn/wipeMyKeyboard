@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var locker = KeyboardLocker()
+    @ObservedObject var locker: KeyboardLocker
     
     var body: some View {
         VStack(spacing: 20) {
