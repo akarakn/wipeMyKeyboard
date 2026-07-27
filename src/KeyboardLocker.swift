@@ -4,6 +4,8 @@ import CoreGraphics
 import Combine
 
 class KeyboardLocker: ObservableObject {
+    static let infiniteDurationValue = 130.0
+
     @Published var isLocked: Bool = false
     @Published var timeRemaining: Int = 0
     @Published var duration: Double = 30.0
@@ -51,6 +53,10 @@ class KeyboardLocker: ObservableObject {
 
     var unlockShortcutDescription: String {
         "\(Self.modifierName(for: unlockModifier)) + \(unlockKeyName)"
+    }
+
+    var isInfiniteDuration: Bool {
+        duration >= Self.infiniteDurationValue
     }
     
     var isAccessibilityEnabled: Bool {
@@ -105,6 +111,12 @@ class KeyboardLocker: ObservableObject {
         CGEvent.tapEnable(tap: tap, enable: true)
         
         self.isLocked = true
+
+        if isInfiniteDuration {
+            self.timeRemaining = 0
+            return
+        }
+
         self.timeRemaining = Int(self.duration)
         
         self.timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] _ in

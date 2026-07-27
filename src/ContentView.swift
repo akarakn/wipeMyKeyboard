@@ -23,9 +23,14 @@ struct ContentView: View {
                     .font(.largeTitle)
                     .bold()
                 
-                Text("\(locker.timeRemaining)s")
-                    .font(.system(size: 60, weight: .bold, design: .monospaced))
-                    .foregroundColor(locker.timeRemaining <= 5 ? .red : .primary)
+                if locker.isInfiniteDuration {
+                    Text("∞")
+                        .font(.system(size: 60, weight: .bold))
+                } else {
+                    Text("\(locker.timeRemaining)s")
+                        .font(.system(size: 60, weight: .bold, design: .monospaced))
+                        .foregroundColor(locker.timeRemaining <= 5 ? .red : .primary)
+                }
                 
                 VStack(spacing: 8) {
                     Button("Unlock") {
@@ -42,9 +47,27 @@ struct ContentView: View {
                     .bold()
                 
                 VStack {
-                    Text("Duration: \(Int(locker.duration)) seconds")
-                    Slider(value: $locker.duration, in: 10...120, step: 10)
+                    Text(
+                        locker.isInfiniteDuration
+                            ? "Duration: Infinite"
+                            : "Duration: \(Int(locker.duration)) seconds"
+                    )
+
+                    Slider(
+                        value: $locker.duration,
+                        in: 10...KeyboardLocker.infiniteDurationValue,
+                        step: 10
+                    )
                         .padding(.horizontal)
+
+                    HStack {
+                        Text("10s")
+                        Spacer()
+                        Text("∞")
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
                 }
 
                 VStack(spacing: 6) {
