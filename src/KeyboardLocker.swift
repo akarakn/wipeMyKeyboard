@@ -104,6 +104,7 @@ class KeyboardLocker: ObservableObject {
 
         installGlobalShortcutHandler()
         registerGlobalShortcut()
+        installCLIControl()
     }
 
     deinit {
@@ -114,6 +115,13 @@ class KeyboardLocker: ObservableObject {
         if let globalHotKeyHandler {
             RemoveEventHandler(globalHotKeyHandler)
         }
+
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            CLIControlProtocol.notificationName,
+            nil
+        )
     }
 
     var unlockShortcutDescription: String {
@@ -397,5 +405,109 @@ class KeyboardLocker: ObservableObject {
         if !isLocked {
             ignoreUnlockShortcutUntilKeyUp = false
         }
+    }
+
+    private func installCLIControl() {
+        try? CLIControlProtocol.prepareControlDirectory()
+
+        let callback: CFNotificationCallback = {
+            _, observer, _, _, _ in
+            guard let observer else { return }
+
+            let locker = Unmanaged<KeyboardLocker>
+                .fromOpaque(observer)
+                .takeUnretainedValue()
+
+            DispatchQueue.main.async {
+                locker.processPendingCLIRequests()
+            }
+        }
+
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            callback,
+            CLIControlProtocol.notificationName.rawValue,
+            nil,
+            .deliverImmediately
+        )
+
+        DispatchQueue.main.async {
+            self.processPendingCLIRequests()
+        }
+    }
+
+    private func processPendingCLIRequests() {
+        guard
+            let requestURLs = try? CLIControlProtocol.pendingRequestURLs()
+        else {
+            return
+        }
+
+        for requestURL in requestURLs {
+            defer {
+                try? FileManager.default.removeItem(at: requestURL)
+            }
+
+            guard
+                let requestData = try? Data(contentsOf: requestURL),
+                let request = try? JSONDecoder()
+                    .decode(CLIControlRequest.self, from: requestData)
+            else {
+                continue
+            }
+
+            let response = response(for: request)
+            guard
+                let responseData = try? JSONEncoder().encode(response)
+            else {
+                continue
+            }
+
+            try? responseData.write(
+                to: CLIControlProtocol.responseURL(for: request.id),
+                options: .atomic
+            )
+        }
+    }
+
+    private func response(
+        for request: CLIControlRequest
+    ) -> CLIControlResponse {
+        let result: (success: Bool, message: String)
+
+        switch request.command {
+        case .lock:
+            if isLocked {
+                result = (true, "Input is already locked.")
+            } else if !hasLockTargets {
+                result = (false, "No input devices are selected.")
+            } else {
+                startLocking()
+                result = isLocked
+                    ? (true, "Locked: \(lockedDevicesDescription).")
+                    : (false, "Unable to lock input. Check Accessibility permission.")
+            }
+
+        case .unlock:
+            if isLocked {
+                stopLocking()
+                result = (true, "Input unlocked.")
+            } else {
+                result = (true, "Input is already unlocked.")
+            }
+
+        case .status:
+            result = isLocked
+                ? (true, "Locked: \(lockedDevicesDescription).")
+                : (true, "Unlocked.")
+        }
+
+        return CLIControlResponse(
+            id: request.id,
+            success: result.success,
+            message: result.message,
+            isLocked: isLocked
+        )
     }
 }

@@ -7,14 +7,19 @@ APP_NAME="wipeMyKeyboard"
 APP_DIR="${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
+HELPERS_DIR="${CONTENTS_DIR}/Helpers"
 
 rm -rf "${APP_DIR}"
 
 mkdir -p "${MACOS_DIR}"
+mkdir -p "${HELPERS_DIR}"
 mkdir -p "${CONTENTS_DIR}/Resources"
 
 echo "Compiling Swift files..."
-swiftc src/KeyboardLocker.swift src/ContentView.swift src/wipeMyKeyboardApp.swift -o "${MACOS_DIR}/${APP_NAME}"
+swiftc src/CLIControlProtocol.swift src/KeyboardLocker.swift src/ContentView.swift src/wipeMyKeyboardApp.swift -o "${MACOS_DIR}/${APP_NAME}"
+
+echo "Compiling CLI helper..."
+swiftc src/CLIControlProtocol.swift cli/wipemykeyboard.swift -o "${HELPERS_DIR}/wipemykeyboard"
 
 if [ -f "assets/AppIcon.icns" ]; then
     echo "Adding AppIcon.icns..."
