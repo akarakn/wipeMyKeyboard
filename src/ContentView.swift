@@ -71,7 +71,7 @@ struct ContentView: View {
                 }
 
                 VStack(spacing: 6) {
-                    Text("Unlock Shortcut")
+                    Text("Lock / Unlock Shortcut")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -92,6 +92,10 @@ struct ContentView: View {
                         Text("Press one modifier and one key")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+                    } else if let error = locker.globalShortcutError {
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundColor(.red)
                     }
                 }
                 

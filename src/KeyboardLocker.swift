@@ -2,6 +2,7 @@ import Foundation
 import Cocoa
 import CoreGraphics
 import Combine
+import Carbon
 
 class KeyboardLocker: ObservableObject {
     static let infiniteDurationValue = 130.0
@@ -17,12 +18,17 @@ class KeyboardLocker: ObservableObject {
     @Published private(set) var unlockKeyCode: Int64
     @Published private(set) var unlockModifier: CGEventFlags
     @Published private(set) var unlockKeyName: String
+    @Published private(set) var globalShortcutError: String?
 
     private static let defaultUnlockKeyCode: Int64 = 53
     private static let defaultUnlockModifier: CGEventFlags = .maskControl
     private static let defaultUnlockKeyName = "Esc"
     private static let defaultDuration = 30.0
     private static let minimumDuration = 10.0
+    private static let lockHotKeyID = EventHotKeyID(
+        signature: OSType(0x574D4B42),
+        id: 1
+    )
     private static let supportedModifierFlags: CGEventFlags = [
         .maskCommand,
         .maskAlternate,
@@ -40,6 +46,9 @@ class KeyboardLocker: ObservableObject {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var timer: AnyCancellable?
+    private var globalHotKey: EventHotKeyRef?
+    private var globalHotKeyHandler: EventHandlerRef?
+    private var ignoreUnlockShortcutUntilKeyUp = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -66,6 +75,19 @@ class KeyboardLocker: ObservableObject {
 
         self.unlockKeyName = defaults.string(forKey: DefaultsKey.unlockKeyName)
             ?? Self.defaultUnlockKeyName
+
+        installGlobalShortcutHandler()
+        registerGlobalShortcut()
+    }
+
+    deinit {
+        if let globalHotKey {
+            UnregisterEventHotKey(globalHotKey)
+        }
+
+        if let globalHotKeyHandler {
+            RemoveEventHandler(globalHotKeyHandler)
+        }
     }
 
     var unlockShortcutDescription: String {
@@ -82,7 +104,7 @@ class KeyboardLocker: ObservableObject {
     }
     
     func startLocking() {
-        guard isAccessibilityEnabled else { return }
+        guard !isLocked, isAccessibilityEnabled else { return }
         
         let eventCallback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return nil }
@@ -93,12 +115,15 @@ class KeyboardLocker: ObservableObject {
 
             let activeModifiers = event.flags
                 .intersection(KeyboardLocker.supportedModifierFlags)
+            let eventKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
             let isUnlockShortcut =
                 type == .keyDown &&
-                event.getIntegerValueField(.keyboardEventKeycode) == locker.unlockKeyCode &&
+                eventKeyCode == locker.unlockKeyCode &&
                 activeModifiers == locker.unlockModifier
 
-            if isUnlockShortcut {
+            if type == .keyUp, eventKeyCode == locker.unlockKeyCode {
+                locker.ignoreUnlockShortcutUntilKeyUp = false
+            } else if isUnlockShortcut, !locker.ignoreUnlockShortcutUntilKeyUp {
                 DispatchQueue.main.async { locker.stopLocking() }
             }
 
@@ -118,6 +143,7 @@ class KeyboardLocker: ObservableObject {
             callback: eventCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
+            ignoreUnlockShortcutUntilKeyUp = false
             print("Failed to create event tap")
             return
         }
@@ -163,6 +189,8 @@ class KeyboardLocker: ObservableObject {
         defaults.set(keyCode, forKey: DefaultsKey.unlockKeyCode)
         defaults.set(Int(modifier.rawValue), forKey: DefaultsKey.unlockModifier)
         defaults.set(keyName, forKey: DefaultsKey.unlockKeyName)
+
+        registerGlobalShortcut()
     }
     
     func stopLocking(playCompletionSound: Bool = false) {
@@ -195,6 +223,87 @@ class KeyboardLocker: ObservableObject {
             return "Shift"
         default:
             return "Control"
+        }
+    }
+
+    private func installGlobalShortcutHandler() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+
+        let callback: EventHandlerUPP = { _, _, userData in
+            guard let userData else { return OSStatus(eventNotHandledErr) }
+
+            let locker = Unmanaged<KeyboardLocker>
+                .fromOpaque(userData)
+                .takeUnretainedValue()
+
+            DispatchQueue.main.async {
+                locker.lockFromGlobalShortcut()
+            }
+
+            return noErr
+        }
+
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            callback,
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &globalHotKeyHandler
+        )
+
+        if status != noErr {
+            globalShortcutError = "Global shortcut could not be enabled."
+        }
+    }
+
+    private func registerGlobalShortcut() {
+        if let globalHotKey {
+            UnregisterEventHotKey(globalHotKey)
+            self.globalHotKey = nil
+        }
+
+        guard globalHotKeyHandler != nil else { return }
+
+        let hotKeyID = Self.lockHotKeyID
+        let status = RegisterEventHotKey(
+            UInt32(unlockKeyCode),
+            carbonModifierFlags,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &globalHotKey
+        )
+
+        globalShortcutError = status == noErr
+            ? nil
+            : "This shortcut is already in use."
+    }
+
+    private var carbonModifierFlags: UInt32 {
+        switch unlockModifier {
+        case .maskCommand:
+            return UInt32(cmdKey)
+        case .maskAlternate:
+            return UInt32(optionKey)
+        case .maskShift:
+            return UInt32(shiftKey)
+        default:
+            return UInt32(controlKey)
+        }
+    }
+
+    private func lockFromGlobalShortcut() {
+        guard !isLocked else { return }
+
+        ignoreUnlockShortcutUntilKeyUp = true
+        startLocking()
+
+        if !isLocked {
+            ignoreUnlockShortcutUntilKeyUp = false
         }
     }
 }
