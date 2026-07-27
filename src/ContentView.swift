@@ -95,6 +95,89 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
 
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Applications to Hide")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        Button {
+                            locker.refreshHideableApplications()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh application list")
+                    }
+
+                    if locker.hideableApplications.isEmpty {
+                        Text("No other applications are running.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 7) {
+                                ForEach(locker.hideableApplications) { application in
+                                    Toggle(
+                                        isOn: Binding(
+                                            get: {
+                                                locker.isApplicationSelected(
+                                                    application
+                                                )
+                                            },
+                                            set: { selected in
+                                                locker.setApplication(
+                                                    application,
+                                                    selected: selected
+                                                )
+                                            }
+                                        )
+                                    ) {
+                                        HStack(spacing: 7) {
+                                            if let icon = application.icon {
+                                                Image(nsImage: icon)
+                                                    .resizable()
+                                                    .frame(width: 18, height: 18)
+                                            } else {
+                                                Image(systemName: "app")
+                                                    .frame(width: 18, height: 18)
+                                            }
+
+                                            Text(application.displayName)
+                                                .lineLimit(1)
+
+                                            Spacer()
+
+                                            if !application.isRunning {
+                                                Text("Not running")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                    .opacity(application.isRunning ? 1 : 0.65)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: applicationListHeight)
+                    }
+
+                    Text(
+                        locker.selectedApplicationCount == 0
+                            ? "\(locker.hideableApplications.count) available."
+                            : "\(locker.hideableApplications.count) available, "
+                                + "\(locker.selectedApplicationCount) selected."
+                    )
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+
                 VStack(spacing: 6) {
                     Text("Lock / Unlock Shortcut")
                         .font(.caption)
@@ -154,10 +237,17 @@ struct ContentView: View {
             .foregroundColor(.secondary)
         }
         .padding()
-        .frame(width: 300)
+        .frame(width: 330)
+        .onAppear {
+            locker.refreshHideableApplications()
+        }
         .onDisappear {
             stopShortcutRecording()
         }
+    }
+
+    private var applicationListHeight: CGFloat {
+        min(CGFloat(locker.hideableApplications.count) * 28, 120)
     }
 
     private func startShortcutRecording() {

@@ -5,7 +5,8 @@
 **Lock the input, not the screen.**
 
 A lightweight macOS utility that temporarily disables selected keyboard, mouse,
-and trackpad input without locking your screen. Keep curious coworkers away
+and trackpad input without locking your screen. It can also hide selected
+running applications for the duration of the lock. Keep curious coworkers away
 from your workstation, or safely wipe your devices clean. It supports automatic
 or infinite lock durations, a global shortcut, and command-line control.
 

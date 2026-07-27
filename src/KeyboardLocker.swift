@@ -4,11 +4,24 @@ import CoreGraphics
 import Combine
 import Carbon
 
+struct HideableApplication: Identifiable {
+    let bundleIdentifier: String
+    let displayName: String
+    let icon: NSImage?
+    let isRunning: Bool
+
+    var id: String {
+        bundleIdentifier
+    }
+}
+
 class KeyboardLocker: ObservableObject {
     static let infiniteDurationValue = 130.0
 
     @Published var isLocked: Bool = false
     @Published var timeRemaining: Int = 0
+    @Published private(set) var hideableApplications: [HideableApplication] = []
+    @Published private(set) var selectedApplicationBundleIdentifiers: Set<String>
     @Published var duration: Double {
         didSet {
             UserDefaults.standard.set(duration, forKey: DefaultsKey.duration)
@@ -58,6 +71,10 @@ class KeyboardLocker: ObservableObject {
         static let unlockKeyCode = "unlockKeyCode"
         static let unlockModifier = "unlockModifier"
         static let unlockKeyName = "unlockKeyName"
+        static let selectedApplicationBundleIdentifiers =
+            "selectedApplicationBundleIdentifiers"
+        static let selectedApplicationDisplayNames =
+            "selectedApplicationDisplayNames"
     }
 
     private var eventTap: CFMachPort?
@@ -66,9 +83,18 @@ class KeyboardLocker: ObservableObject {
     private var globalHotKey: EventHotKeyRef?
     private var globalHotKeyHandler: EventHandlerRef?
     private var ignoreUnlockShortcutUntilKeyUp = false
+    private var selectedApplicationDisplayNames: [String: String]
+    private var applicationsHiddenForCurrentLock: Set<pid_t> = []
+    private var workspaceObservers: [NSObjectProtocol] = []
 
     init() {
         let defaults = UserDefaults.standard
+        let savedApplicationBundleIdentifiers = defaults.stringArray(
+            forKey: DefaultsKey.selectedApplicationBundleIdentifiers
+        ) ?? []
+        let savedApplicationDisplayNames = defaults.dictionary(
+            forKey: DefaultsKey.selectedApplicationDisplayNames
+        )?.compactMapValues { $0 as? String } ?? [:]
 
         if defaults.object(forKey: DefaultsKey.duration) == nil {
             self.duration = Self.defaultDuration
@@ -102,6 +128,13 @@ class KeyboardLocker: ObservableObject {
         self.unlockKeyName = defaults.string(forKey: DefaultsKey.unlockKeyName)
             ?? Self.defaultUnlockKeyName
 
+        self.selectedApplicationBundleIdentifiers = Set(
+            savedApplicationBundleIdentifiers
+        )
+        self.selectedApplicationDisplayNames = savedApplicationDisplayNames
+
+        refreshHideableApplications()
+        installWorkspaceObservers()
         installGlobalShortcutHandler()
         registerGlobalShortcut()
         installCLIControl()
@@ -114,6 +147,11 @@ class KeyboardLocker: ObservableObject {
 
         if let globalHotKeyHandler {
             RemoveEventHandler(globalHotKeyHandler)
+        }
+
+        let workspaceNotificationCenter = NSWorkspace.shared.notificationCenter
+        for observer in workspaceObservers {
+            workspaceNotificationCenter.removeObserver(observer)
         }
 
         CFNotificationCenterRemoveObserver(
@@ -136,6 +174,10 @@ class KeyboardLocker: ObservableObject {
         lockKeyboard || lockPointingDevices
     }
 
+    var selectedApplicationCount: Int {
+        selectedApplicationBundleIdentifiers.count
+    }
+
     var lockedDevicesDescription: String {
         switch (lockKeyboard, lockPointingDevices) {
         case (true, true):
@@ -147,6 +189,99 @@ class KeyboardLocker: ObservableObject {
         case (false, false):
             return "None"
         }
+    }
+
+    func isApplicationSelected(_ application: HideableApplication) -> Bool {
+        selectedApplicationBundleIdentifiers.contains(
+            application.bundleIdentifier
+        )
+    }
+
+    func setApplication(
+        _ application: HideableApplication,
+        selected: Bool
+    ) {
+        var updatedBundleIdentifiers = selectedApplicationBundleIdentifiers
+
+        if selected {
+            updatedBundleIdentifiers.insert(application.bundleIdentifier)
+            selectedApplicationDisplayNames[application.bundleIdentifier] =
+                application.displayName
+        } else {
+            updatedBundleIdentifiers.remove(application.bundleIdentifier)
+            selectedApplicationDisplayNames.removeValue(
+                forKey: application.bundleIdentifier
+            )
+        }
+
+        selectedApplicationBundleIdentifiers = updatedBundleIdentifiers
+        persistSelectedApplications()
+        refreshHideableApplications()
+    }
+
+    func refreshHideableApplications() {
+        let currentBundleIdentifier = Bundle.main.bundleIdentifier
+        let runningApplications = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular &&
+                !$0.isTerminated &&
+                $0.processIdentifier != ProcessInfo.processInfo.processIdentifier &&
+                $0.bundleIdentifier != currentBundleIdentifier
+        }
+
+        var applicationsByBundleIdentifier: [String: HideableApplication] = [:]
+
+        for runningApplication in runningApplications {
+            guard let bundleIdentifier = runningApplication.bundleIdentifier else {
+                continue
+            }
+
+            let displayName = runningApplication.localizedName
+                ?? selectedApplicationDisplayNames[bundleIdentifier]
+                ?? bundleIdentifier
+
+            applicationsByBundleIdentifier[bundleIdentifier] =
+                HideableApplication(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    icon: runningApplication.icon,
+                    isRunning: true
+                )
+
+            if selectedApplicationBundleIdentifiers.contains(bundleIdentifier) {
+                selectedApplicationDisplayNames[bundleIdentifier] = displayName
+            }
+        }
+
+        for bundleIdentifier in selectedApplicationBundleIdentifiers
+        where applicationsByBundleIdentifier[bundleIdentifier] == nil {
+            let displayName = selectedApplicationDisplayNames[bundleIdentifier]
+                ?? bundleIdentifier
+            let icon = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: bundleIdentifier
+            ).map {
+                NSWorkspace.shared.icon(forFile: $0.path)
+            }
+
+            applicationsByBundleIdentifier[bundleIdentifier] =
+                HideableApplication(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    icon: icon,
+                    isRunning: false
+                )
+        }
+
+        hideableApplications = applicationsByBundleIdentifier.values.sorted {
+            if $0.isRunning != $1.isRunning {
+                return $0.isRunning
+            }
+
+            return $0.displayName.localizedCaseInsensitiveCompare(
+                $1.displayName
+            ) == .orderedAscending
+        }
+
+        persistSelectedApplications()
     }
     
     var isAccessibilityEnabled: Bool {
@@ -254,6 +389,7 @@ class KeyboardLocker: ObservableObject {
         CGEvent.tapEnable(tap: tap, enable: true)
         
         self.isLocked = true
+        hideSelectedApplications()
 
         if isInfiniteDuration {
             self.timeRemaining = 0
@@ -302,7 +438,8 @@ class KeyboardLocker: ObservableObject {
             self.eventTap = nil
             self.runLoopSource = nil
         }
-        
+
+        restoreApplicationsHiddenForCurrentLock()
         self.timer?.cancel()
         self.timer = nil
         self.isLocked = false
@@ -311,6 +448,83 @@ class KeyboardLocker: ObservableObject {
         if playCompletionSound {
             NSSound(named: "Glass")?.play()
         }
+    }
+
+    private func persistSelectedApplications() {
+        let defaults = UserDefaults.standard
+        defaults.set(
+            selectedApplicationBundleIdentifiers.sorted(),
+            forKey: DefaultsKey.selectedApplicationBundleIdentifiers
+        )
+        defaults.set(
+            selectedApplicationDisplayNames,
+            forKey: DefaultsKey.selectedApplicationDisplayNames
+        )
+    }
+
+    private func installWorkspaceObservers() {
+        let workspaceNotificationCenter = NSWorkspace.shared.notificationCenter
+        let notificationNames: [Notification.Name] = [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didTerminateApplicationNotification
+        ]
+
+        for notificationName in notificationNames {
+            let observer = workspaceNotificationCenter.addObserver(
+                forName: notificationName,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+
+                self.refreshHideableApplications()
+
+                if self.isLocked {
+                    self.hideSelectedApplications()
+                }
+            }
+
+            workspaceObservers.append(observer)
+        }
+    }
+
+    private func hideSelectedApplications() {
+        for application in NSWorkspace.shared.runningApplications {
+            guard
+                application.activationPolicy == .regular,
+                !application.isTerminated,
+                !application.isHidden,
+                application.processIdentifier !=
+                    ProcessInfo.processInfo.processIdentifier,
+                let bundleIdentifier = application.bundleIdentifier,
+                selectedApplicationBundleIdentifiers.contains(bundleIdentifier)
+            else {
+                continue
+            }
+
+            if application.hide() {
+                applicationsHiddenForCurrentLock.insert(
+                    application.processIdentifier
+                )
+            }
+        }
+    }
+
+    private func restoreApplicationsHiddenForCurrentLock() {
+        for processIdentifier in applicationsHiddenForCurrentLock {
+            guard
+                let application = NSRunningApplication(
+                    processIdentifier: processIdentifier
+                ),
+                !application.isTerminated
+            else {
+                continue
+            }
+
+            application.unhide()
+        }
+
+        applicationsHiddenForCurrentLock.removeAll()
     }
 
     private static func modifierName(for modifier: CGEventFlags) -> String {
