@@ -42,6 +42,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
 EOF

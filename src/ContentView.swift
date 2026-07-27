@@ -86,9 +86,20 @@ struct ContentView: View {
                 .buttonStyle(PlainButtonStyle())
                 .padding(.horizontal)
             }
+
+            Divider()
+
+            Button {
+                locker.stopLocking()
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Label("Quit Wipe My Keyboard", systemImage: "power")
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
         }
         .padding()
-        .frame(width: 300, height: 320)
+        .frame(width: 300)
         .onDisappear {
             stopShortcutRecording()
         }
