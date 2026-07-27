@@ -19,9 +19,13 @@ struct ContentView: View {
             }
             
             if locker.isLocked {
-                Text("Keyboard Locked")
+                Text("Input Locked")
                     .font(.largeTitle)
                     .bold()
+
+                Text(locker.lockedDevicesDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 
                 if locker.isInfiniteDuration {
                     Text("∞")
@@ -70,6 +74,27 @@ struct ContentView: View {
                     .padding(.horizontal)
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Devices to Lock")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Keyboard", isOn: $locker.lockKeyboard)
+                    Toggle(
+                        "Mouse & Trackpad",
+                        isOn: $locker.lockPointingDevices
+                    )
+
+                    if !locker.hasLockTargets {
+                        Text("Select at least one device.")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+
                 VStack(spacing: 6) {
                     Text("Lock / Unlock Shortcut")
                         .font(.caption)
@@ -102,15 +127,18 @@ struct ContentView: View {
                 Button(action: {
                     locker.startLocking()
                 }) {
-                    Text("Lock Keyboard")
+                    Text("Lock Input")
                         .font(.headline)
                         .padding()
                         .frame(maxWidth: .infinity)
-                        .background(Color.blue)
+                        .background(
+                            locker.hasLockTargets ? Color.blue : Color.gray
+                        )
                         .foregroundColor(.white)
                         .cornerRadius(10)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .disabled(!locker.hasLockTargets)
                 .padding(.horizontal)
             }
 

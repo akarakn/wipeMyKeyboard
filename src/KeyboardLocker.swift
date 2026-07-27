@@ -14,6 +14,19 @@ class KeyboardLocker: ObservableObject {
             UserDefaults.standard.set(duration, forKey: DefaultsKey.duration)
         }
     }
+    @Published var lockKeyboard: Bool {
+        didSet {
+            UserDefaults.standard.set(lockKeyboard, forKey: DefaultsKey.lockKeyboard)
+        }
+    }
+    @Published var lockPointingDevices: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                lockPointingDevices,
+                forKey: DefaultsKey.lockPointingDevices
+            )
+        }
+    }
 
     @Published private(set) var unlockKeyCode: Int64
     @Published private(set) var unlockModifier: CGEventFlags
@@ -25,6 +38,8 @@ class KeyboardLocker: ObservableObject {
     private static let defaultUnlockKeyName = "Esc"
     private static let defaultDuration = 30.0
     private static let minimumDuration = 10.0
+    private static let defaultLockKeyboard = true
+    private static let defaultLockPointingDevices = true
     private static let lockHotKeyID = EventHotKeyID(
         signature: OSType(0x574D4B42),
         id: 1
@@ -38,6 +53,8 @@ class KeyboardLocker: ObservableObject {
 
     private enum DefaultsKey {
         static let duration = "duration"
+        static let lockKeyboard = "lockKeyboard"
+        static let lockPointingDevices = "lockPointingDevices"
         static let unlockKeyCode = "unlockKeyCode"
         static let unlockModifier = "unlockModifier"
         static let unlockKeyName = "unlockKeyName"
@@ -62,6 +79,15 @@ class KeyboardLocker: ObservableObject {
                 ? savedDuration
                 : Self.defaultDuration
         }
+
+        self.lockKeyboard = defaults.object(forKey: DefaultsKey.lockKeyboard) == nil
+            ? Self.defaultLockKeyboard
+            : defaults.bool(forKey: DefaultsKey.lockKeyboard)
+
+        self.lockPointingDevices =
+            defaults.object(forKey: DefaultsKey.lockPointingDevices) == nil
+            ? Self.defaultLockPointingDevices
+            : defaults.bool(forKey: DefaultsKey.lockPointingDevices)
 
         self.unlockKeyCode = defaults.object(forKey: DefaultsKey.unlockKeyCode) == nil
             ? Self.defaultUnlockKeyCode
@@ -97,6 +123,23 @@ class KeyboardLocker: ObservableObject {
     var isInfiniteDuration: Bool {
         duration >= Self.infiniteDurationValue
     }
+
+    var hasLockTargets: Bool {
+        lockKeyboard || lockPointingDevices
+    }
+
+    var lockedDevicesDescription: String {
+        switch (lockKeyboard, lockPointingDevices) {
+        case (true, true):
+            return "Keyboard, Mouse & Trackpad"
+        case (true, false):
+            return "Keyboard"
+        case (false, true):
+            return "Mouse & Trackpad"
+        case (false, false):
+            return "None"
+        }
+    }
     
     var isAccessibilityEnabled: Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
@@ -104,7 +147,7 @@ class KeyboardLocker: ObservableObject {
     }
     
     func startLocking() {
-        guard !isLocked, isAccessibilityEnabled else { return }
+        guard !isLocked, hasLockTargets, isAccessibilityEnabled else { return }
         
         let eventCallback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return nil }
@@ -113,27 +156,76 @@ class KeyboardLocker: ObservableObject {
                 .fromOpaque(userInfo)
                 .takeUnretainedValue()
 
-            let activeModifiers = event.flags
-                .intersection(KeyboardLocker.supportedModifierFlags)
-            let eventKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            let isUnlockShortcut =
-                type == .keyDown &&
-                eventKeyCode == locker.unlockKeyCode &&
-                activeModifiers == locker.unlockModifier
-
-            if type == .keyUp, eventKeyCode == locker.unlockKeyCode {
-                locker.ignoreUnlockShortcutUntilKeyUp = false
-            } else if isUnlockShortcut, !locker.ignoreUnlockShortcutUntilKeyUp {
-                DispatchQueue.main.async { locker.stopLocking() }
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let eventTap = locker.eventTap {
+                    CGEvent.tapEnable(tap: eventTap, enable: true)
+                }
+                return Unmanaged.passUnretained(event)
             }
 
-            return nil
+            let isKeyboardEvent =
+                type == .keyDown ||
+                type == .keyUp ||
+                type == .flagsChanged ||
+                type.rawValue == 14
+
+            if isKeyboardEvent {
+                let activeModifiers = event.flags
+                    .intersection(KeyboardLocker.supportedModifierFlags)
+                let eventKeyCode = event.getIntegerValueField(
+                    .keyboardEventKeycode
+                )
+                let isUnlockShortcut =
+                    type == .keyDown &&
+                    eventKeyCode == locker.unlockKeyCode &&
+                    activeModifiers == locker.unlockModifier
+
+                if type == .keyUp,
+                   eventKeyCode == locker.unlockKeyCode,
+                   locker.ignoreUnlockShortcutUntilKeyUp {
+                    locker.ignoreUnlockShortcutUntilKeyUp = false
+                    return nil
+                }
+
+                if isUnlockShortcut,
+                   !locker.ignoreUnlockShortcutUntilKeyUp {
+                    DispatchQueue.main.async { locker.stopLocking() }
+                    return nil
+                }
+
+                return locker.lockKeyboard
+                    ? nil
+                    : Unmanaged.passUnretained(event)
+            }
+
+            return locker.lockPointingDevices
+                ? nil
+                : Unmanaged.passUnretained(event)
         }
         
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | 
-                        (1 << CGEventType.keyUp.rawValue) | 
-                        (1 << CGEventType.flagsChanged.rawValue) |
-                        (1 << 14) // NX_SYSDEFINED for media/function keys
+        let keyboardEventMask =
+            (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.keyUp.rawValue) |
+            (1 << CGEventType.flagsChanged.rawValue) |
+            (1 << 14) // NX_SYSDEFINED for media/function keys
+
+        let pointingDeviceEventMask =
+            (1 << CGEventType.leftMouseDown.rawValue) |
+            (1 << CGEventType.leftMouseUp.rawValue) |
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.rightMouseUp.rawValue) |
+            (1 << CGEventType.mouseMoved.rawValue) |
+            (1 << CGEventType.leftMouseDragged.rawValue) |
+            (1 << CGEventType.rightMouseDragged.rawValue) |
+            (1 << CGEventType.scrollWheel.rawValue) |
+            (1 << CGEventType.tabletPointer.rawValue) |
+            (1 << CGEventType.tabletProximity.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseUp.rawValue) |
+            (1 << CGEventType.otherMouseDragged.rawValue)
+
+        let eventMask = keyboardEventMask |
+            (lockPointingDevices ? pointingDeviceEventMask : 0)
         
         guard let tap = CGEvent.tapCreate(
             tap: .cghidEventTap,
