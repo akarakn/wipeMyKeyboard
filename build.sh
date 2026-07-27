@@ -26,6 +26,9 @@ if [ -f "assets/AppIcon.icns" ]; then
     cp "assets/AppIcon.icns" "${CONTENTS_DIR}/Resources/"
 fi
 
+echo "Adding zsh completion..."
+cp "completions/_wipemykeyboard" "${CONTENTS_DIR}/Resources/"
+
 cat > "${CONTENTS_DIR}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

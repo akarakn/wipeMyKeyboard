@@ -30,6 +30,14 @@ Install the app under `/Applications`, then expose the helper on your `PATH`:
 sudo ./install-cli.sh /Applications/wipeMyKeyboard.app
 ```
 
+The installer also adds zsh completion for `--lock`, `--unlock`, `--status`,
+and `--help`. Open a new terminal after installation, or reload completion in
+the current shell:
+
+```sh
+autoload -Uz compinit && compinit
+```
+
 For a local development build:
 
 ```sh

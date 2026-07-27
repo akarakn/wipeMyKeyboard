@@ -1,0 +1,7 @@
+#compdef wipemykeyboard
+
+_arguments -s -S \
+    '(- 1 *)--lock[lock the selected input devices and hide selected apps]' \
+    '(- 1 *)--unlock[unlock input and restore apps hidden by the lock]' \
+    '(- 1 *)--status[show the current lock status]' \
+    '(- 1 *)'{-h,--help}'[show usage information]'
