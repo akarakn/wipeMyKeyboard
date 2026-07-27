@@ -8,7 +8,11 @@ class KeyboardLocker: ObservableObject {
 
     @Published var isLocked: Bool = false
     @Published var timeRemaining: Int = 0
-    @Published var duration: Double = 30.0
+    @Published var duration: Double {
+        didSet {
+            UserDefaults.standard.set(duration, forKey: DefaultsKey.duration)
+        }
+    }
 
     @Published private(set) var unlockKeyCode: Int64
     @Published private(set) var unlockModifier: CGEventFlags
@@ -17,6 +21,8 @@ class KeyboardLocker: ObservableObject {
     private static let defaultUnlockKeyCode: Int64 = 53
     private static let defaultUnlockModifier: CGEventFlags = .maskControl
     private static let defaultUnlockKeyName = "Esc"
+    private static let defaultDuration = 30.0
+    private static let minimumDuration = 10.0
     private static let supportedModifierFlags: CGEventFlags = [
         .maskCommand,
         .maskAlternate,
@@ -25,6 +31,7 @@ class KeyboardLocker: ObservableObject {
     ]
 
     private enum DefaultsKey {
+        static let duration = "duration"
         static let unlockKeyCode = "unlockKeyCode"
         static let unlockModifier = "unlockModifier"
         static let unlockKeyName = "unlockKeyName"
@@ -36,6 +43,16 @@ class KeyboardLocker: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+
+        if defaults.object(forKey: DefaultsKey.duration) == nil {
+            self.duration = Self.defaultDuration
+        } else {
+            let savedDuration = defaults.double(forKey: DefaultsKey.duration)
+            self.duration = (Self.minimumDuration...Self.infiniteDurationValue)
+                .contains(savedDuration)
+                ? savedDuration
+                : Self.defaultDuration
+        }
 
         self.unlockKeyCode = defaults.object(forKey: DefaultsKey.unlockKeyCode) == nil
             ? Self.defaultUnlockKeyCode
