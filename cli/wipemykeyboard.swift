@@ -80,7 +80,7 @@ struct WipeMyKeyboardCLI {
         Usage: wipemykeyboard --lock | --unlock | --status
 
           --lock    Lock the selected input devices
-          --unlock  Unlock all input devices
+          --unlock  Unlock all input devices without authentication
           --status  Print the current lock status
         """
 

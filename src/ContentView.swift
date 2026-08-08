@@ -37,13 +37,30 @@ struct ContentView: View {
                 }
                 
                 VStack(spacing: 8) {
-                    Button("Unlock") {
-                        locker.stopLocking()
+                    Button(
+                        locker.authenticationInProgress
+                            ? "Authenticating…"
+                            : "Authenticate to Unlock"
+                    ) {
+                        locker.requestAuthenticatedUnlock()
                     }
+                    .disabled(locker.authenticationInProgress)
 
-                    Text("or press \(locker.unlockShortcutDescription)")
+                    Text(
+                        locker.authenticationInProgress
+                            ? "Use Touch ID or enter your macOS password"
+                            : "Use your unlock shortcut to authenticate"
+                    )
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    if let error = locker.authenticationError {
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             } else {
                 Text("Wipe My Keyboard")
@@ -191,7 +208,7 @@ struct ContentView: View {
                         Text(
                             isRecordingShortcut
                                 ? "Press a shortcut…"
-                                : locker.unlockShortcutDescription
+                                : "Change Unlock Shortcut"
                         )
                         .frame(minWidth: 130)
                     }
@@ -228,13 +245,13 @@ struct ContentView: View {
             Divider()
 
             Button {
-                locker.stopLocking()
                 NSApplication.shared.terminate(nil)
             } label: {
                 Label("Quit Wipe My Keyboard", systemImage: "power")
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
+            .disabled(locker.isLocked)
         }
         .padding()
         .frame(width: 330)

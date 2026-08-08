@@ -24,6 +24,10 @@ wipemykeyboard --unlock
 wipemykeyboard --status
 ```
 
+Unlocking from the menu bar or shortcut requires Touch ID, Apple Watch, or the
+current user's macOS password. The same-user `--unlock` command remains a
+direct emergency path and does not request authentication.
+
 Install the app under `/Applications`, then expose the helper on your `PATH`:
 
 ```sh

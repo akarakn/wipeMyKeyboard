@@ -3,6 +3,7 @@ import Cocoa
 import CoreGraphics
 import Combine
 import Carbon
+import LocalAuthentication
 
 struct HideableApplication: Identifiable {
     let bundleIdentifier: String
@@ -45,6 +46,8 @@ class KeyboardLocker: ObservableObject {
     @Published private(set) var unlockModifier: CGEventFlags
     @Published private(set) var unlockKeyName: String
     @Published private(set) var globalShortcutError: String?
+    @Published private(set) var authenticationInProgress = false
+    @Published private(set) var authenticationError: String?
 
     private static let defaultUnlockKeyCode: Int64 = 53
     private static let defaultUnlockModifier: CGEventFlags = .maskControl
@@ -62,6 +65,10 @@ class KeyboardLocker: ObservableObject {
         .maskAlternate,
         .maskControl,
         .maskShift
+    ]
+    private static let authenticationRestrictedModifierFlags: CGEventFlags = [
+        .maskCommand,
+        .maskControl
     ]
 
     private enum DefaultsKey {
@@ -82,6 +89,7 @@ class KeyboardLocker: ObservableObject {
     private var timer: AnyCancellable?
     private var globalHotKey: EventHotKeyRef?
     private var globalHotKeyHandler: EventHandlerRef?
+    private var authenticationContext: LAContext?
     private var ignoreUnlockShortcutUntilKeyUp = false
     private var selectedApplicationDisplayNames: [String: String]
     private var applicationsHiddenForCurrentLock: Set<pid_t> = []
@@ -141,6 +149,8 @@ class KeyboardLocker: ObservableObject {
     }
 
     deinit {
+        authenticationContext?.invalidate()
+
         if let globalHotKey {
             UnregisterEventHotKey(globalHotKey)
         }
@@ -160,10 +170,6 @@ class KeyboardLocker: ObservableObject {
             CLIControlProtocol.notificationName,
             nil
         )
-    }
-
-    var unlockShortcutDescription: String {
-        "\(Self.modifierName(for: unlockModifier)) + \(unlockKeyName)"
     }
 
     var isInfiniteDuration: Bool {
@@ -332,8 +338,26 @@ class KeyboardLocker: ObservableObject {
 
                 if isUnlockShortcut,
                    !locker.ignoreUnlockShortcutUntilKeyUp {
-                    DispatchQueue.main.async { locker.stopLocking() }
+                    DispatchQueue.main.async {
+                        locker.requestAuthenticatedUnlock()
+                    }
                     return nil
+                }
+
+                let isPasswordEntryEvent =
+                    type == .keyDown ||
+                    type == .keyUp ||
+                    type == .flagsChanged
+                let hasRestrictedAuthenticationModifier = !activeModifiers
+                    .intersection(
+                        KeyboardLocker.authenticationRestrictedModifierFlags
+                    )
+                    .isEmpty
+
+                if locker.authenticationInProgress,
+                   isPasswordEntryEvent,
+                   !hasRestrictedAuthenticationModifier {
+                    return Unmanaged.passUnretained(event)
                 }
 
                 return locker.lockKeyboard
@@ -428,8 +452,64 @@ class KeyboardLocker: ObservableObject {
 
         registerGlobalShortcut()
     }
-    
-    func stopLocking(playCompletionSound: Bool = false) {
+
+    func requestAuthenticatedUnlock() {
+        guard isLocked, !authenticationInProgress else { return }
+
+        let context = LAContext()
+        context.localizedCancelTitle = "Keep Locked"
+        context.localizedFallbackTitle = "Use Password"
+        context.touchIDAuthenticationAllowableReuseDuration = 0
+
+        var policyError: NSError?
+        guard context.canEvaluatePolicy(
+            .deviceOwnerAuthentication,
+            error: &policyError
+        ) else {
+            authenticationError = policyError?.localizedDescription
+                ?? "Touch ID or password authentication is unavailable."
+            return
+        }
+
+        authenticationContext?.invalidate()
+        authenticationContext = context
+        authenticationInProgress = true
+        authenticationError = nil
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        context.evaluatePolicy(
+            .deviceOwnerAuthentication,
+            localizedReason: "unlock keyboard and pointing devices"
+        ) { [weak self, weak context] success, error in
+            DispatchQueue.main.async {
+                guard
+                    let self,
+                    let context,
+                    self.authenticationContext === context
+                else {
+                    return
+                }
+
+                self.authenticationContext = nil
+                self.authenticationInProgress = false
+
+                if success {
+                    self.stopLocking()
+                } else if (error as? LAError)?.code != .userCancel {
+                    self.authenticationError = error?.localizedDescription
+                        ?? "Authentication failed."
+                }
+            }
+        }
+    }
+
+    private func stopLocking(playCompletionSound: Bool = false) {
+        authenticationContext?.invalidate()
+        authenticationContext = nil
+        authenticationInProgress = false
+        authenticationError = nil
+
         if let tap = self.eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             if let source = self.runLoopSource {
@@ -525,19 +605,6 @@ class KeyboardLocker: ObservableObject {
         }
 
         applicationsHiddenForCurrentLock.removeAll()
-    }
-
-    private static func modifierName(for modifier: CGEventFlags) -> String {
-        switch modifier {
-        case .maskCommand:
-            return "Command"
-        case .maskAlternate:
-            return "Option"
-        case .maskShift:
-            return "Shift"
-        default:
-            return "Control"
-        }
     }
 
     private func installGlobalShortcutHandler() {

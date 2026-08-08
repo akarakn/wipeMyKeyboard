@@ -8,6 +8,19 @@ APP_DIR="${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 HELPERS_DIR="${CONTENTS_DIR}/Helpers"
+MACOS_MIN_VERSION="13.0"
+BUILD_ARCH="$(uname -m)"
+
+case "${BUILD_ARCH}" in
+    arm64|x86_64)
+        ;;
+    *)
+        echo "Unsupported build architecture: ${BUILD_ARCH}"
+        exit 1
+        ;;
+esac
+
+SWIFT_TARGET="${BUILD_ARCH}-apple-macosx${MACOS_MIN_VERSION}"
 
 rm -rf "${APP_DIR}"
 
@@ -16,10 +29,10 @@ mkdir -p "${HELPERS_DIR}"
 mkdir -p "${CONTENTS_DIR}/Resources"
 
 echo "Compiling Swift files..."
-swiftc src/CLIControlProtocol.swift src/KeyboardLocker.swift src/ContentView.swift src/wipeMyKeyboardApp.swift -o "${MACOS_DIR}/${APP_NAME}"
+swiftc -target "${SWIFT_TARGET}" src/CLIControlProtocol.swift src/KeyboardLocker.swift src/ContentView.swift src/wipeMyKeyboardApp.swift -o "${MACOS_DIR}/${APP_NAME}"
 
 echo "Compiling CLI helper..."
-swiftc src/CLIControlProtocol.swift cli/wipemykeyboard.swift -o "${HELPERS_DIR}/wipemykeyboard"
+swiftc -target "${SWIFT_TARGET}" src/CLIControlProtocol.swift cli/wipemykeyboard.swift -o "${HELPERS_DIR}/wipemykeyboard"
 
 if [ -f "assets/AppIcon.icns" ]; then
     echo "Adding AppIcon.icns..."
@@ -49,7 +62,7 @@ cat > "${CONTENTS_DIR}/Info.plist" <<EOF
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>${MACOS_MIN_VERSION}</string>
     <key>LSUIElement</key>
     <true/>
 </dict>
